@@ -1,6 +1,7 @@
 package com.stii.music
 
 import android.Manifest
+import android.content.ComponentName
 import android.content.ContentUris
 import android.content.Context
 import android.content.pm.PackageManager
@@ -103,12 +104,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import androidx.media3.common.AudioAttributes
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
-import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
 import coil.compose.AsyncImage
+import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -117,7 +119,9 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URLEncoder
 import java.net.URL
+import java.text.Normalizer
 import java.util.Locale
+import java.util.concurrent.ExecutionException
 
 private val Ink = Color(0xFF090B0D)
 private val Panel = Color(0xFF14181B)
@@ -125,41 +129,71 @@ private val Lime = Color(0xFFC7F36B)
 private val Muted = Color(0xFF929A9D)
 
 class MainActivity : ComponentActivity() {
-    private lateinit var player: ExoPlayer
+    private var controllerFuture: ListenableFuture<MediaController>? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        player = ExoPlayer.Builder(this).build().apply {
-            setAudioAttributes(AudioAttributes.DEFAULT, true)
-            setHandleAudioBecomingNoisy(true)
-        }
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(primary = Lime, onPrimary = Ink, background = Ink,
                 surface = Panel, onSurface = Color(0xFFF4F6F2), secondary = Color(0xFF8DD9C5))) {
-                StiiApp(player)
+                Column(Modifier.fillMaxSize().background(Ink), horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center) {
+                    CircularProgressIndicator(color = Lime)
+                    Spacer(Modifier.height(14.dp))
+                    Text("Starting Stii…", color = Muted)
+                }
             }
         }
     }
-    override fun onDestroy() { player.release(); super.onDestroy() }
+
+    override fun onStart() {
+        super.onStart()
+        val token = SessionToken(this, ComponentName(this, StiiPlaybackService::class.java))
+        val future = MediaController.Builder(this, token).buildAsync()
+        controllerFuture = future
+        future.addListener({
+            try {
+                val controller = future.get()
+                if (!isFinishing && !isDestroyed) setContent {
+                    MaterialTheme(colorScheme = darkColorScheme(primary = Lime, onPrimary = Ink, background = Ink,
+                        surface = Panel, onSurface = Color(0xFFF4F6F2), secondary = Color(0xFF8DD9C5))) {
+                        StiiApp(controller)
+                    }
+                }
+            } catch (_: ExecutionException) {
+                // The progress view remains visible if Android cannot connect to the playback service.
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        }, ContextCompat.getMainExecutor(this))
+    }
+
+    override fun onStop() {
+        controllerFuture?.let(MediaController::releaseFuture)
+        controllerFuture = null
+        super.onStop()
+    }
 }
 
 private data class AudioTrack(
     val id: Long, val title: String, val artist: String, val album: String,
-    val albumId: Long, val durationMs: Long, val uri: Uri, val searchDocument: String
+    val albumId: Long, val durationMs: Long, val uri: Uri,
+    val normalizedTitle: String, val normalizedArtist: String, val searchDocument: String
 ) {
     val artwork: Uri get() = ContentUris.withAppendedId(MediaStore.Audio.Albums.EXTERNAL_CONTENT_URI, albumId)
 }
 private enum class Tab { HOME, SEARCH, LIBRARY }
 
 @Composable
-private fun StiiApp(player: ExoPlayer) {
+private fun StiiApp(player: Player) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var tracks by remember { mutableStateOf<List<AudioTrack>>(emptyList()) }
     var results by remember { mutableStateOf<List<AudioTrack>>(emptyList()) }
     var tab by remember { mutableStateOf(Tab.HOME) }
     var query by remember { mutableStateOf("") }
-    var selectedId by remember { mutableStateOf<String?>(null) }
-    var playing by remember { mutableStateOf(false) }
+    var selectedId by remember { mutableStateOf<String?>(player.currentMediaItem?.mediaId) }
+    var playing by remember { mutableStateOf(player.isPlaying) }
     var showPlayer by remember { mutableStateOf(false) }
     var showQueue by remember { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
@@ -169,7 +203,7 @@ private fun StiiApp(player: ExoPlayer) {
     var duration by remember { mutableFloatStateOf(1f) }
     var libraryReady by remember { mutableStateOf(false) }
     var favorites by remember { mutableStateOf<Set<Long>>(emptySet()) }
-    var shuffle by remember { mutableStateOf(false) }
+    var shuffle by remember { mutableStateOf(player.shuffleModeEnabled) }
     val currentTrack = remember(tracks, selectedId) { tracks.firstOrNull { it.id.toString() == selectedId } }
     val permission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
 
@@ -179,59 +213,81 @@ private fun StiiApp(player: ExoPlayer) {
     } }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { if (it) loadLibrary() else libraryReady = true }
     LaunchedEffect(Unit) {
-        favorites = context.getSharedPreferences("stii_library", Context.MODE_PRIVATE).getStringSet("favorites", emptySet())
-            .orEmpty().mapNotNull(String::toLongOrNull).toSet()
+        favorites = context.getSharedPreferences("stii_library", Context.MODE_PRIVATE)
+            .getStringSet("favorites", emptySet()).orEmpty().mapNotNull(String::toLongOrNull).toSet()
         if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) loadLibrary()
     }
+
+    // Search is local-first and immediate: pre-normalized fields, accent-insensitive matching,
+    // exact/prefix matches ranked first, and cancellable background filtering as the query changes.
     LaunchedEffect(query, tracks, tab, favorites) {
-        val input = query.trim().lowercase(Locale.ROOT)
+        val input = normalizeSearch(query)
         results = withContext(Dispatchers.Default) {
             val source = if (tab == Tab.LIBRARY) tracks.filter { it.id in favorites } else tracks
-            if (input.isEmpty()) source else source.asSequence().mapNotNull { track ->
-                val rank = when {
-                    track.searchDocument == input -> 0
-                    track.title.lowercase(Locale.ROOT).startsWith(input) -> 1
-                    track.artist.lowercase(Locale.ROOT).startsWith(input) -> 2
-                    track.searchDocument.contains(input) -> 3
-                    else -> return@mapNotNull null
-                }
-                rank to track
-            }.sortedBy { it.first }.map { it.second }.toList()
+            if (input.isBlank()) source else {
+                val tokens = input.split(' ').filter(String::isNotBlank)
+                source.asSequence().mapNotNull { track ->
+                    val rank = when {
+                        track.normalizedTitle == input -> 0
+                        track.normalizedTitle.startsWith(input) -> 1
+                        track.normalizedArtist.startsWith(input) -> 2
+                        tokens.all(track.searchDocument::contains) -> 3
+                        else -> return@mapNotNull null
+                    }
+                    rank to track
+                }.sortedBy { it.first }.map { it.second }.toList()
+            }
         }
     }
+
     LaunchedEffect(player) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying }
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) { selectedId = mediaItem?.mediaId }
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                duration = player.duration.takeIf { it > 0 }?.toFloat() ?: 1f
+            }
         }
         player.addListener(listener)
-        try { while (true) { position = player.currentPosition.coerceAtLeast(0L).toFloat(); duration = player.duration.takeIf { it > 0 }?.toFloat() ?: 1f; delay(250) } }
-        finally { player.removeListener(listener) }
+        try {
+            while (true) {
+                position = player.currentPosition.coerceAtLeast(0L).toFloat()
+                duration = player.duration.takeIf { it > 0 }?.toFloat() ?: 1f
+                delay(250)
+            }
+        } finally { player.removeListener(listener) }
     }
+
     fun playAt(track: AudioTrack) {
-        val queue = tracks.map { item -> MediaItem.Builder().setMediaId(item.id.toString()).setUri(item.uri)
-            .setMediaMetadata(MediaMetadata.Builder().setTitle(item.title).setArtist(item.artist).setAlbumTitle(item.album).setArtworkUri(item.artwork).build()).build() }
+        val queue = tracks.map { item ->
+            MediaItem.Builder().setMediaId(item.id.toString()).setUri(item.uri)
+                .setMediaMetadata(MediaMetadata.Builder().setTitle(item.title).setArtist(item.artist)
+                    .setAlbumTitle(item.album).setArtworkUri(item.artwork).build()).build()
+        }
         val index = tracks.indexOfFirst { it.id == track.id }
-        if (index < 0) return
-        player.setMediaItems(queue, index, 0L); player.shuffleModeEnabled = shuffle; player.prepare(); player.play()
-        selectedId = track.id.toString(); showPlayer = true
+        if (index < 0 || queue.isEmpty()) return
+        player.setMediaItems(queue, index, 0L)
+        player.shuffleModeEnabled = shuffle
+        player.prepare()
+        player.play()
+        selectedId = track.id.toString()
+        showPlayer = true
     }
     fun toggleFavorite(track: AudioTrack) {
         favorites = if (track.id in favorites) favorites - track.id else favorites + track.id
-        context.getSharedPreferences("stii_library", Context.MODE_PRIVATE).edit().putStringSet("favorites", favorites.map(Long::toString).toSet()).apply()
+        context.getSharedPreferences("stii_library", Context.MODE_PRIVATE).edit()
+            .putStringSet("favorites", favorites.map(Long::toString).toSet()).apply()
     }
     fun loadLyrics(track: AudioTrack) {
         showLyrics = true; lyrics = null; lyricsLoading = true
-        scope.launch {
-            lyrics = withContext(Dispatchers.IO) { fetchLyrics(track) }
-            lyricsLoading = false
-        }
+        scope.launch { lyrics = withContext(Dispatchers.IO) { fetchLyrics(track) }; lyricsLoading = false }
     }
 
     Scaffold(containerColor = Ink, bottomBar = {
         Column {
-            if (!showPlayer && currentTrack != null) MiniPlayer(currentTrack, playing, { showPlayer = true },
-                { if (playing) player.pause() else player.play() }, { if (player.hasNextMediaItem()) player.seekToNextMediaItem() })
+            if (!showPlayer && currentTrack != null) MiniPlayer(currentTrack, playing,
+                { showPlayer = true }, { if (player.isPlaying) player.pause() else player.play() },
+                { if (player.hasNextMediaItem()) player.seekToNextMediaItem() })
             if (!showPlayer) NavigationBar(containerColor = Ink, contentColor = Lime) {
                 listOf(Tab.HOME, Tab.SEARCH, Tab.LIBRARY).forEach { item ->
                     val label = when (item) { Tab.HOME -> "Home"; Tab.SEARCH -> "Search"; Tab.LIBRARY -> "Library" }
@@ -248,7 +304,7 @@ private fun StiiApp(player: ExoPlayer) {
         }, label = "player-screen") { fullPlayer ->
             if (fullPlayer && currentTrack != null) NowPlaying(
                 currentTrack, playing, position, duration, currentTrack.id in favorites, shuffle, player.repeatMode,
-                { showPlayer = false }, { if (playing) player.pause() else player.play() },
+                { showPlayer = false }, { if (player.isPlaying) player.pause() else player.play() },
                 { if (player.hasPreviousMediaItem()) player.seekToPreviousMediaItem() },
                 { if (player.hasNextMediaItem()) player.seekToNextMediaItem() }, { player.seekTo(it.toLong()) },
                 { toggleFavorite(currentTrack) }, { shuffle = !shuffle; player.shuffleModeEnabled = shuffle },
@@ -294,11 +350,14 @@ private fun StiiApp(player: ExoPlayer) {
         } }, confirmButton = { TextButton(onClick = { showLyrics = false }) { Text("Done") } }, containerColor = Panel)
 }
 
+private fun normalizeSearch(value: String): String = Normalizer.normalize(value.lowercase(Locale.ROOT), Normalizer.Form.NFD)
+    .replace(Regex("\\p{Mn}+"), "").trim().replace(Regex("\\s+"), " ")
+
 private suspend fun fetchLyrics(track: AudioTrack): String? = runCatching {
     val title = URLEncoder.encode(track.title, "UTF-8")
     val artist = URLEncoder.encode(track.artist, "UTF-8")
     val connection = (URL("https://lrclib.net/api/get?track_name=$title&artist_name=$artist").openConnection() as HttpURLConnection).apply {
-        connectTimeout = 5000; readTimeout = 7000; requestMethod = "GET"; setRequestProperty("User-Agent", "Stii/0.2 (Android music player)")
+        connectTimeout = 5000; readTimeout = 7000; requestMethod = "GET"; setRequestProperty("User-Agent", "Stii/0.3 (Android music player)")
     }
     try {
         if (connection.responseCode !in 200..299) return null
@@ -319,8 +378,12 @@ private fun readAudioLibrary(context: Context): List<AudioTrack> {
             val songId = cursor.getLong(id); val songTitle = cursor.getString(title) ?: "Unknown track"
             val songArtist = cursor.getString(artist)?.takeUnless { it == "<unknown>" } ?: "Unknown artist"
             val songAlbum = cursor.getString(album) ?: "Unknown album"; val artId = cursor.getLong(albumId); val length = cursor.getLong(duration)
-            if (length > 1000) result += AudioTrack(songId, songTitle, songArtist, songAlbum, artId, length,
-                ContentUris.withAppendedId(collection, songId), "$songTitle $songArtist $songAlbum".lowercase(Locale.ROOT))
+            if (length > 1000) {
+                val normalizedTitle = normalizeSearch(songTitle); val normalizedArtist = normalizeSearch(songArtist)
+                val doc = normalizeSearch("$songTitle $songArtist $songAlbum")
+                result += AudioTrack(songId, songTitle, songArtist, songAlbum, artId, length,
+                    ContentUris.withAppendedId(collection, songId), normalizedTitle, normalizedArtist, doc)
+            }
         }
     }
     return result
@@ -334,9 +397,7 @@ private fun readAudioLibrary(context: Context): List<AudioTrack> {
     }
 }
 @Composable private fun HeroCard(trackCount: Int, onOpenLibrary: () -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp).clip(RoundedCornerShape(28.dp))
-        .background(Brush.linearGradient(listOf(Color(0xFF25352D), Color(0xFF11191A), Color(0xFF17272A))))
-        .clickable(onClick = onOpenLibrary).animateContentSize(spring()).padding(22.dp)) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp).clip(RoundedCornerShape(28.dp)).background(Brush.linearGradient(listOf(Color(0xFF25352D), Color(0xFF11191A), Color(0xFF17272A)))).clickable(onClick = onOpenLibrary).animateContentSize(spring()).padding(22.dp)) {
         Text("YOUR MUSIC,\nIN YOUR ELEMENT.", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
         Spacer(Modifier.height(10.dp)); Text("A private listening space. No account needed.", color = Color(0xFFCAD3CE))
         Spacer(Modifier.height(20.dp)); Row(verticalAlignment = Alignment.CenterVertically) {
@@ -385,12 +446,10 @@ private fun readAudioLibrary(context: Context): List<AudioTrack> {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
             Text("NOW PLAYING", Modifier.weight(1f), color = Muted, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-            IconButton(onClick = onQueue) { Icon(Icons.Default.QueueMusic, "Queue", tint = Lime) }
-            IconButton(onClick = onLyrics) { Icon(Icons.Default.TextSnippet, "Lyrics", tint = Lime) }
+            IconButton(onClick = onQueue) { Icon(Icons.Default.QueueMusic, "Queue", tint = Lime) }; IconButton(onClick = onLyrics) { Icon(Icons.Default.TextSnippet, "Lyrics", tint = Lime) }
         }
         Spacer(Modifier.weight(.55f))
-        Box(Modifier.fillMaxWidth().aspectRatio(1f).graphicsLayer { scaleX = scale; scaleY = scale }.clip(RoundedCornerShape(32.dp))
-            .background(Brush.linearGradient(listOf(Color(0xFF496C52), Color(0xFF1E3230), Color(0xFF161A21))), contentAlignment = Alignment.Center) {
+        Box(Modifier.fillMaxWidth().aspectRatio(1f).graphicsLayer { scaleX = scale; scaleY = scale }.clip(RoundedCornerShape(32.dp)).background(Brush.linearGradient(listOf(Color(0xFF496C52), Color(0xFF1E3230), Color(0xFF161A21))), contentAlignment = Alignment.Center) {
             AsyncImage(track.artwork, "Album art for ${track.album}", Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .14f)))
         }
