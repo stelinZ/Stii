@@ -15,15 +15,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.updateTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
@@ -37,16 +33,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -61,17 +53,12 @@ import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.QueueMusic
-import androidx.compose.material.icons.filled.Repeat
-import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material.icons.filled.TextSnippet
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -81,7 +68,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.darkColorScheme
@@ -115,11 +101,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URLEncoder
-import java.net.URL
-import java.text.Normalizer
 import java.util.Locale
 import java.util.concurrent.ExecutionException
 
@@ -133,14 +114,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        renderStarting()
+    }
+
+    private fun renderStarting() {
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme(primary = Lime, onPrimary = Ink, background = Ink,
-                surface = Panel, onSurface = Color(0xFFF4F6F2), secondary = Color(0xFF8DD9C5))) {
-                Column(Modifier.fillMaxSize().background(Ink), horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center) {
-                    CircularProgressIndicator(color = Lime)
-                    Spacer(Modifier.height(14.dp))
-                    Text("Starting Stii…", color = Muted)
+            MaterialTheme(colorScheme = darkColorScheme(primary = Lime, onPrimary = Ink, background = Ink, surface = Panel, onSurface = Color(0xFFF4F6F2))) {
+                Box(Modifier.fillMaxSize().background(Ink), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(color = Lime)
+                        Spacer(Modifier.height(14.dp))
+                        Text("Starting Stii…", color = Muted)
+                    }
                 }
             }
         }
@@ -148,20 +133,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        val token = SessionToken(this, ComponentName(this, StiiPlaybackService::class.java))
-        val future = MediaController.Builder(this, token).buildAsync()
+        val future = MediaController.Builder(this, SessionToken(this, ComponentName(this, StiiPlaybackService::class.java))).buildAsync()
         controllerFuture = future
         future.addListener({
             try {
                 val controller = future.get()
                 if (!isFinishing && !isDestroyed) setContent {
-                    MaterialTheme(colorScheme = darkColorScheme(primary = Lime, onPrimary = Ink, background = Ink,
-                        surface = Panel, onSurface = Color(0xFFF4F6F2), secondary = Color(0xFF8DD9C5))) {
+                    MaterialTheme(colorScheme = darkColorScheme(primary = Lime, onPrimary = Ink, background = Ink, surface = Panel, onSurface = Color(0xFFF4F6F2))) {
                         StiiApp(controller)
                     }
                 }
             } catch (_: ExecutionException) {
-                // The progress view remains visible if Android cannot connect to the playback service.
+                renderStarting()
             } catch (_: InterruptedException) {
                 Thread.currentThread().interrupt()
             }
@@ -175,78 +158,105 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private data class AudioTrack(
-    val id: Long, val title: String, val artist: String, val album: String,
-    val albumId: Long, val durationMs: Long, val uri: Uri,
-    val normalizedTitle: String, val normalizedArtist: String, val searchDocument: String
-) {
-    val artwork: Uri get() = ContentUris.withAppendedId(MediaStore.Audio.Albums.EXTERNAL_CONTENT_URI, albumId)
-}
+private data class MusicItem(
+    val id: String,
+    val title: String,
+    val artist: String,
+    val album: String,
+    val durationMs: Long,
+    val mediaUri: Uri,
+    val artworkUri: Uri? = null,
+    val isOnline: Boolean = false,
+    val license: String? = null,
+    val normalized: String = normalizeSearch("$title $artist $album")
+)
+
 private enum class Tab { HOME, SEARCH, LIBRARY }
+private enum class SearchSource { DEVICE, OPEN_WEB }
 
 @Composable
 private fun StiiApp(player: Player) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var tracks by remember { mutableStateOf<List<AudioTrack>>(emptyList()) }
-    var results by remember { mutableStateOf<List<AudioTrack>>(emptyList()) }
+    var library by remember { mutableStateOf<List<MusicItem>>(emptyList()) }
+    var onlineResults by remember { mutableStateOf<List<MusicItem>>(emptyList()) }
+    var localResults by remember { mutableStateOf<List<MusicItem>>(emptyList()) }
     var tab by remember { mutableStateOf(Tab.HOME) }
+    var searchSource by remember { mutableStateOf(SearchSource.DEVICE) }
     var query by remember { mutableStateOf("") }
-    var selectedId by remember { mutableStateOf<String?>(player.currentMediaItem?.mediaId) }
+    var selectedId by remember { mutableStateOf(player.currentMediaItem?.mediaId) }
     var playing by remember { mutableStateOf(player.isPlaying) }
     var showPlayer by remember { mutableStateOf(false) }
-    var showQueue by remember { mutableStateOf(false) }
-    var showLyrics by remember { mutableStateOf(false) }
-    var lyrics by remember { mutableStateOf<String?>(null) }
-    var lyricsLoading by remember { mutableStateOf(false) }
     var position by remember { mutableFloatStateOf(0f) }
     var duration by remember { mutableFloatStateOf(1f) }
-    var libraryReady by remember { mutableStateOf(false) }
-    var favorites by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var scanning by remember { mutableStateOf(false) }
+    var onlineLoading by remember { mutableStateOf(false) }
+    var onlineError by remember { mutableStateOf<String?>(null) }
+    var favorites by remember { mutableStateOf<Set<String>>(emptySet()) }
     var shuffle by remember { mutableStateOf(player.shuffleModeEnabled) }
-    val currentTrack = remember(tracks, selectedId) { tracks.firstOrNull { it.id.toString() == selectedId } }
+    val currentItem = remember(library, onlineResults, selectedId) {
+        (library + onlineResults).firstOrNull { it.id == selectedId }
+    }
     val permission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_AUDIO else Manifest.permission.READ_EXTERNAL_STORAGE
 
-    fun loadLibrary() { scope.launch {
-        tracks = withContext(Dispatchers.IO) { readAudioLibrary(context) }
-        libraryReady = true
-    } }
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { if (it) loadLibrary() else libraryReady = true }
-    LaunchedEffect(Unit) {
-        favorites = context.getSharedPreferences("stii_library", Context.MODE_PRIVATE)
-            .getStringSet("favorites", emptySet()).orEmpty().mapNotNull(String::toLongOrNull).toSet()
-        if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) loadLibrary()
+    fun scanLibrary() {
+        scope.launch {
+            scanning = true
+            library = withContext(Dispatchers.IO) { readLocalLibrary(context) }
+            scanning = false
+        }
     }
 
-    // Search is local-first and immediate: pre-normalized fields, accent-insensitive matching,
-    // exact/prefix matches ranked first, and cancellable background filtering as the query changes.
-    LaunchedEffect(query, tracks, tab, favorites) {
-        val input = normalizeSearch(query)
-        results = withContext(Dispatchers.Default) {
-            val source = if (tab == Tab.LIBRARY) tracks.filter { it.id in favorites } else tracks
-            if (input.isBlank()) source else {
-                val tokens = input.split(' ').filter(String::isNotBlank)
-                source.asSequence().mapNotNull { track ->
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) scanLibrary()
+    }
+
+    LaunchedEffect(Unit) {
+        favorites = context.getSharedPreferences("stii_library", Context.MODE_PRIVATE)
+            .getStringSet("favorites", emptySet()).orEmpty().toSet()
+        if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) scanLibrary()
+    }
+
+    LaunchedEffect(query, library) {
+        val q = normalizeSearch(query)
+        localResults = withContext(Dispatchers.Default) {
+            if (q.isBlank()) emptyList() else library.asSequence()
+                .mapNotNull { item ->
                     val rank = when {
-                        track.normalizedTitle == input -> 0
-                        track.normalizedTitle.startsWith(input) -> 1
-                        track.normalizedArtist.startsWith(input) -> 2
-                        tokens.all(track.searchDocument::contains) -> 3
+                        normalizeSearch(item.title) == q -> 0
+                        normalizeSearch(item.title).startsWith(q) -> 1
+                        normalizeSearch(item.artist).startsWith(q) -> 2
+                        q.split(' ').all(item.normalized::contains) -> 3
                         else -> return@mapNotNull null
                     }
-                    rank to track
+                    rank to item
                 }.sortedBy { it.first }.map { it.second }.toList()
-            }
         }
+    }
+
+    LaunchedEffect(query, searchSource, tab) {
+        if (tab != Tab.SEARCH || searchSource != SearchSource.OPEN_WEB || query.trim().length < 2) {
+            onlineResults = emptyList()
+            onlineLoading = false
+            onlineError = null
+            return@LaunchedEffect
+        }
+        delay(300)
+        onlineLoading = true
+        onlineError = null
+        val result = withContext(Dispatchers.IO) { InternetArchiveCatalog.searchOpenAudio(query.trim()) }
+        onlineResults = result.getOrElse {
+            onlineError = "Интернет-поиск сейчас недоступен. Проверьте соединение и попробуйте ещё раз."
+            emptyList()
+        }
+        onlineLoading = false
     }
 
     LaunchedEffect(player) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying }
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) { selectedId = mediaItem?.mediaId }
-            override fun onPlaybackStateChanged(playbackState: Int) {
-                duration = player.duration.takeIf { it > 0 }?.toFloat() ?: 1f
-            }
+            override fun onPlaybackStateChanged(playbackState: Int) { duration = player.duration.takeIf { it > 0 }?.toFloat() ?: 1f }
         }
         player.addListener(listener)
         try {
@@ -258,216 +268,224 @@ private fun StiiApp(player: Player) {
         } finally { player.removeListener(listener) }
     }
 
-    fun playAt(track: AudioTrack) {
-        val queue = tracks.map { item ->
-            MediaItem.Builder().setMediaId(item.id.toString()).setUri(item.uri)
-                .setMediaMetadata(MediaMetadata.Builder().setTitle(item.title).setArtist(item.artist)
-                    .setAlbumTitle(item.album).setArtworkUri(item.artwork).build()).build()
-        }
-        val index = tracks.indexOfFirst { it.id == track.id }
-        if (index < 0 || queue.isEmpty()) return
-        player.setMediaItems(queue, index, 0L)
+    fun play(item: MusicItem) {
+        // A web result is queued independently, avoiding accidental jumps into local tracks.
+        val queue = if (item.isOnline) listOf(item) else library
+        val index = queue.indexOfFirst { it.id == item.id }
+        if (index < 0) return
+        player.setMediaItems(queue.map { song ->
+            MediaItem.Builder().setMediaId(song.id).setUri(song.mediaUri)
+                .setMediaMetadata(MediaMetadata.Builder().setTitle(song.title).setArtist(song.artist)
+                    .setAlbumTitle(song.album).setArtworkUri(song.artworkUri).build()).build()
+        }, index, 0L)
         player.shuffleModeEnabled = shuffle
         player.prepare()
         player.play()
-        selectedId = track.id.toString()
+        selectedId = item.id
         showPlayer = true
     }
-    fun toggleFavorite(track: AudioTrack) {
-        favorites = if (track.id in favorites) favorites - track.id else favorites + track.id
-        context.getSharedPreferences("stii_library", Context.MODE_PRIVATE).edit()
-            .putStringSet("favorites", favorites.map(Long::toString).toSet()).apply()
-    }
-    fun loadLyrics(track: AudioTrack) {
-        showLyrics = true; lyrics = null; lyricsLoading = true
-        scope.launch { lyrics = withContext(Dispatchers.IO) { fetchLyrics(track) }; lyricsLoading = false }
+
+    fun toggleFavorite(item: MusicItem) {
+        favorites = if (item.id in favorites) favorites - item.id else favorites + item.id
+        context.getSharedPreferences("stii_library", Context.MODE_PRIVATE).edit().putStringSet("favorites", favorites).apply()
     }
 
     Scaffold(containerColor = Ink, bottomBar = {
         Column {
-            if (!showPlayer && currentTrack != null) MiniPlayer(currentTrack, playing,
+            if (!showPlayer && currentItem != null) MiniPlayer(currentItem, playing,
                 { showPlayer = true }, { if (player.isPlaying) player.pause() else player.play() },
                 { if (player.hasNextMediaItem()) player.seekToNextMediaItem() })
             if (!showPlayer) NavigationBar(containerColor = Ink, contentColor = Lime) {
                 listOf(Tab.HOME, Tab.SEARCH, Tab.LIBRARY).forEach { item ->
-                    val label = when (item) { Tab.HOME -> "Home"; Tab.SEARCH -> "Search"; Tab.LIBRARY -> "Library" }
+                    val title = when (item) { Tab.HOME -> "Главная"; Tab.SEARCH -> "Поиск"; Tab.LIBRARY -> "Избранное" }
                     NavigationBarItem(selected = tab == item, onClick = { tab = item; if (item != Tab.SEARCH) query = "" },
-                        icon = { Icon(when (item) { Tab.HOME -> Icons.Default.Home; Tab.SEARCH -> Icons.Default.Search; Tab.LIBRARY -> Icons.Default.LibraryMusic }, label) },
-                        label = { Text(label) })
+                        icon = { Icon(when (item) { Tab.HOME -> Icons.Default.Home; Tab.SEARCH -> Icons.Default.Search; Tab.LIBRARY -> Icons.Default.LibraryMusic }, title) },
+                        label = { Text(title) })
                 }
             }
         }
-    }) { padding ->
+    }) { insets ->
         AnimatedContent(showPlayer, transitionSpec = {
-            (fadeIn(tween(260)) + slideInHorizontally(tween(320, easing = FastOutSlowInEasing)) { it / 7 }) togetherWith
-                (fadeOut(tween(180)) + slideOutHorizontally(tween(260)) { -it / 10 })
+            (fadeIn(tween(250)) + slideInHorizontally(tween(300, easing = FastOutSlowInEasing)) { it / 8 }) togetherWith
+                (fadeOut(tween(160)) + slideOutHorizontally(tween(240)) { -it / 10 })
         }, label = "player-screen") { fullPlayer ->
-            if (fullPlayer && currentTrack != null) NowPlaying(
-                currentTrack, playing, position, duration, currentTrack.id in favorites, shuffle, player.repeatMode,
+            if (fullPlayer && currentItem != null) NowPlaying(
+                currentItem, playing, position, duration,
                 { showPlayer = false }, { if (player.isPlaying) player.pause() else player.play() },
                 { if (player.hasPreviousMediaItem()) player.seekToPreviousMediaItem() },
                 { if (player.hasNextMediaItem()) player.seekToNextMediaItem() }, { player.seekTo(it.toLong()) },
-                { toggleFavorite(currentTrack) }, { shuffle = !shuffle; player.shuffleModeEnabled = shuffle },
+                { toggleFavorite(currentItem) }, { shuffle = !shuffle; player.shuffleModeEnabled = shuffle },
                 { player.repeatMode = when (player.repeatMode) { Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL; Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE; else -> Player.REPEAT_MODE_OFF } },
-                { showQueue = true }, { loadLyrics(currentTrack) }, Modifier.padding(padding)
-            ) else Column(Modifier.fillMaxSize().padding(padding)) {
+                shuffle, player.repeatMode, Modifier.padding(insets)
+            ) else Column(Modifier.fillMaxSize().padding(insets)) {
                 Header(tab)
-                AnimatedVisibility(tab == Tab.SEARCH, enter = fadeIn() + slideInVertically { -it / 3 }, exit = fadeOut() + slideOutVertically { -it / 4 }) {
-                    TextField(query, { query = it }, Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
-                        placeholder = { Text("Songs, artists, albums", color = Muted) }, leadingIcon = { Icon(Icons.Default.Search, null, tint = Muted) },
-                        singleLine = true, shape = RoundedCornerShape(18.dp), colors = TextFieldDefaults.colors(
+                if (tab == Tab.SEARCH) {
+                    TextField(query, { query = it }, Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp),
+                        placeholder = { Text("Песня, исполнитель или альбом", color = Muted) },
+                        leadingIcon = { Icon(Icons.Default.Search, null, tint = Muted) }, singleLine = true,
+                        shape = RoundedCornerShape(18.dp), colors = TextFieldDefaults.colors(
                             focusedContainerColor = Panel, unfocusedContainerColor = Panel,
                             focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
+                    Row(Modifier.padding(horizontal = 18.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = searchSource == SearchSource.DEVICE, onClick = { searchSource = SearchSource.DEVICE },
+                            label = { Text("На устройстве") }, leadingIcon = { Icon(Icons.Default.MusicNote, null) })
+                        FilterChip(selected = searchSource == SearchSource.OPEN_WEB, onClick = { searchSource = SearchSource.OPEN_WEB },
+                            label = { Text("Открытый интернет") }, leadingIcon = { Icon(Icons.Default.Search, null) })
+                    }
+                    if (searchSource == SearchSource.OPEN_WEB) {
+                        Text("Поиск по Internet Archive · показываются записи с открытой лицензией",
+                            color = Muted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 22.dp, vertical = 2.dp))
+                    }
                 }
-                AnimatedVisibility(tab == Tab.HOME, enter = fadeIn(tween(300)) + slideInVertically { it / 5 }, exit = fadeOut(tween(160))) {
-                    HeroCard(tracks.size) { tab = Tab.LIBRARY }
+                if (tab == Tab.HOME) HeroCard(library.size) {
+                    if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) scanLibrary()
+                    else permissionLauncher.launch(permission)
                 }
-                if (!libraryReady || tracks.isEmpty()) EmptyLibrary(
+                val visibleItems = when (tab) {
+                    Tab.HOME -> library.take(8)
+                    Tab.LIBRARY -> library.filter { it.id in favorites }
+                    Tab.SEARCH -> if (searchSource == SearchSource.DEVICE) localResults else onlineResults
+                }
+                if (tab == Tab.HOME && library.isEmpty()) EmptyLibrary(
                     ContextCompat.checkSelfPermission(context, permission) != PackageManager.PERMISSION_GRANTED,
-                    { if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) loadLibrary() else permissionLauncher.launch(permission) }
+                    { if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) scanLibrary() else permissionLauncher.launch(permission) }, scanning
                 ) else {
-                    val list = when (tab) { Tab.HOME -> tracks.take(8); Tab.SEARCH, Tab.LIBRARY -> results }
-                    Text(when (tab) { Tab.HOME -> "ON THIS DEVICE"; Tab.SEARCH -> "RESULTS · ${list.size}"; Tab.LIBRARY -> "LIKED SONGS · ${list.size}" },
-                        color = Muted, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(start = 22.dp, top = 18.dp, bottom = 8.dp))
-                    LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(bottom = 16.dp)) {
-                        items(list, key = { it.id }) { track -> TrackRow(track, track.id in favorites, { playAt(track) }, { toggleFavorite(track) }) }
+                    val heading = when (tab) {
+                        Tab.HOME -> "МУЗЫКА НА УСТРОЙСТВЕ"
+                        Tab.LIBRARY -> "ИЗБРАННОЕ · ${visibleItems.size}"
+                        Tab.SEARCH -> if (searchSource == SearchSource.DEVICE) "РЕЗУЛЬТАТЫ · ${visibleItems.size}" else "ОТКРЫТЫЕ АУДИОЗАПИСИ · ${visibleItems.size}"
+                    }
+                    Text(heading, color = Muted, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(start = 22.dp, top = 14.dp, bottom = 6.dp))
+                    when {
+                        tab == Tab.SEARCH && searchSource == SearchSource.OPEN_WEB && onlineLoading -> Box(Modifier.fillMaxWidth().padding(28.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Lime) }
+                        tab == Tab.SEARCH && onlineError != null -> Text(onlineError!!, color = Muted, modifier = Modifier.padding(22.dp))
+                        tab == Tab.SEARCH && searchSource == SearchSource.OPEN_WEB && query.trim().length < 2 -> Text("Введите не менее двух символов для поиска", color = Muted, modifier = Modifier.padding(22.dp))
+                        else -> LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(bottom = 16.dp)) {
+                            items(visibleItems, key = { it.id }) { item ->
+                                TrackRow(item, item.id in favorites, { play(item) }, { toggleFavorite(item) })
+                            }
+                        }
                     }
                 }
             }
         }
     }
-    if (showQueue) AlertDialog(onDismissRequest = { showQueue = false }, title = { Text("Up next") },
-        text = { LazyColumn(Modifier.height(360.dp)) { items(tracks, key = { it.id }) { track ->
-            Row(Modifier.fillMaxWidth().clickable { playAt(track); showQueue = false }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.MusicNote, null, tint = if (track.id.toString() == selectedId) Lime else Muted)
-                Column(Modifier.weight(1f).padding(start = 12.dp)) { Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis); Text(track.artist, color = Muted, style = MaterialTheme.typography.bodySmall) }
-            }
-        } } }, confirmButton = { TextButton(onClick = { showQueue = false }) { Text("Close") } }, containerColor = Panel)
-    if (showLyrics) AlertDialog(onDismissRequest = { showLyrics = false }, title = { Text("Lyrics") },
-        text = { Box(Modifier.height(360.dp).fillMaxWidth(), contentAlignment = if (lyricsLoading) Alignment.Center else Alignment.TopStart) {
-            when { lyricsLoading -> CircularProgressIndicator(color = Lime); lyrics.isNullOrBlank() -> Text("Lyrics were not found. Check your connection and try again.", color = Muted); else -> LazyColumn { item { Text(lyrics!!, style = MaterialTheme.typography.bodyLarge) } } }
-        } }, confirmButton = { TextButton(onClick = { showLyrics = false }) { Text("Done") } }, containerColor = Panel)
 }
 
-private fun normalizeSearch(value: String): String = Normalizer.normalize(value.lowercase(Locale.ROOT), Normalizer.Form.NFD)
+private fun normalizeSearch(value: String): String = java.text.Normalizer.normalize(value.lowercase(Locale.ROOT), java.text.Normalizer.Form.NFD)
     .replace(Regex("\\p{Mn}+"), "").trim().replace(Regex("\\s+"), " ")
 
-private suspend fun fetchLyrics(track: AudioTrack): String? = runCatching {
-    val title = URLEncoder.encode(track.title, "UTF-8")
-    val artist = URLEncoder.encode(track.artist, "UTF-8")
-    val connection = (URL("https://lrclib.net/api/get?track_name=$title&artist_name=$artist").openConnection() as HttpURLConnection).apply {
-        connectTimeout = 5000; readTimeout = 7000; requestMethod = "GET"; setRequestProperty("User-Agent", "Stii/0.3 (Android music player)")
-    }
-    try {
-        if (connection.responseCode !in 200..299) return null
-        val json = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
-        json.optString("syncedLyrics").takeIf { it.isNotBlank() } ?: json.optString("plainLyrics").takeIf { it.isNotBlank() }
-    } finally { connection.disconnect() }
-}.getOrNull()
-
-private fun readAudioLibrary(context: Context): List<AudioTrack> {
+private fun readLocalLibrary(context: Context): List<MusicItem> {
     val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL) else MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-    val projection = arrayOf(MediaStore.Audio.Media._ID, MediaStore.Audio.Media.TITLE, MediaStore.Audio.Media.ARTIST, MediaStore.Audio.Media.ALBUM, MediaStore.Audio.Media.ALBUM_ID, MediaStore.Audio.Media.DURATION)
-    val result = mutableListOf<AudioTrack>()
-    context.contentResolver.query(collection, projection, "${MediaStore.Audio.Media.IS_MUSIC} != 0", null, "${MediaStore.Audio.Media.TITLE} COLLATE NOCASE ASC")?.use { cursor ->
-        val id = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID); val title = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
-        val artist = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST); val album = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
-        val albumId = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID); val duration = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
+    val projection = arrayOf(MediaStore.Audio.Media._ID, MediaStore.Audio.Media.TITLE, MediaStore.Audio.Media.ARTIST,
+        MediaStore.Audio.Media.ALBUM, MediaStore.Audio.Media.ALBUM_ID, MediaStore.Audio.Media.DURATION)
+    val result = mutableListOf<MusicItem>()
+    context.contentResolver.query(collection, projection, "${MediaStore.Audio.Media.IS_MUSIC} != 0", null,
+        "${MediaStore.Audio.Media.TITLE} COLLATE NOCASE ASC")?.use { cursor ->
+        val id = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+        val title = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
+        val artist = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
+        val album = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
+        val albumId = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
+        val duration = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
         while (cursor.moveToNext()) {
-            val songId = cursor.getLong(id); val songTitle = cursor.getString(title) ?: "Unknown track"
-            val songArtist = cursor.getString(artist)?.takeUnless { it == "<unknown>" } ?: "Unknown artist"
-            val songAlbum = cursor.getString(album) ?: "Unknown album"; val artId = cursor.getLong(albumId); val length = cursor.getLong(duration)
-            if (length > 1000) {
-                val normalizedTitle = normalizeSearch(songTitle); val normalizedArtist = normalizeSearch(songArtist)
-                val doc = normalizeSearch("$songTitle $songArtist $songAlbum")
-                result += AudioTrack(songId, songTitle, songArtist, songAlbum, artId, length,
-                    ContentUris.withAppendedId(collection, songId), normalizedTitle, normalizedArtist, doc)
-            }
+            val trackId = cursor.getLong(id)
+            val trackTitle = cursor.getString(title) ?: "Неизвестный трек"
+            val trackArtist = cursor.getString(artist)?.takeUnless { it == "<unknown>" } ?: "Неизвестный исполнитель"
+            val trackAlbum = cursor.getString(album) ?: "Неизвестный альбом"
+            val artId = cursor.getLong(albumId)
+            val length = cursor.getLong(duration)
+            if (length > 1000) result += MusicItem("local:$trackId", trackTitle, trackArtist, trackAlbum, length,
+                ContentUris.withAppendedId(collection, trackId), ContentUris.withAppendedId(MediaStore.Audio.Albums.EXTERNAL_CONTENT_URI, artId))
         }
     }
     return result
 }
 
 @Composable private fun Header(tab: Tab) {
-    val title = when (tab) { Tab.HOME -> "Good evening"; Tab.SEARCH -> "Find your sound"; Tab.LIBRARY -> "Your library" }
+    val title = when (tab) { Tab.HOME -> "С возвращением"; Tab.SEARCH -> "Найди свою музыку"; Tab.LIBRARY -> "Избранное" }
     Row(Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) { Text("STII", color = Lime, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Black); Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold) }
         Box(Modifier.size(42.dp).clip(CircleShape).background(Panel), contentAlignment = Alignment.Center) { Icon(Icons.Default.MusicNote, null, tint = Lime) }
     }
 }
-@Composable private fun HeroCard(trackCount: Int, onOpenLibrary: () -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp).clip(RoundedCornerShape(28.dp)).background(Brush.linearGradient(listOf(Color(0xFF25352D), Color(0xFF11191A), Color(0xFF17272A)))).clickable(onClick = onOpenLibrary).animateContentSize(spring()).padding(22.dp)) {
-        Text("YOUR MUSIC,\nIN YOUR ELEMENT.", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
-        Spacer(Modifier.height(10.dp)); Text("A private listening space. No account needed.", color = Color(0xFFCAD3CE))
-        Spacer(Modifier.height(20.dp)); Row(verticalAlignment = Alignment.CenterVertically) {
-            Surface(color = Lime, shape = CircleShape) { Text("  LISTEN NOW  ", color = Ink, modifier = Modifier.padding(vertical = 9.dp), fontWeight = FontWeight.Bold) }
-            Spacer(Modifier.width(12.dp)); Text("$trackCount tracks on device", color = Color(0xFFCAD3CE), style = MaterialTheme.typography.labelMedium)
-        }
+
+@Composable private fun HeroCard(trackCount: Int, onOpen: () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp).clip(RoundedCornerShape(28.dp))
+        .background(Brush.linearGradient(listOf(Color(0xFF25352D), Color(0xFF11191A), Color(0xFF17272A))))
+        .clickable(onClick = onOpen).padding(22.dp)) {
+        Text("ТВОЯ МУЗЫКА.\nТВОЁ ПРОСТРАНСТВО.", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
+        Spacer(Modifier.height(10.dp)); Text("Ищи открытую музыку или слушай свою библиотеку.", color = Color(0xFFCAD3CE))
+        Spacer(Modifier.height(18.dp)); Text("$trackCount треков на устройстве", color = Lime, style = MaterialTheme.typography.labelLarge)
     }
 }
-@Composable private fun EmptyLibrary(permissionNeeded: Boolean, onOpen: () -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 36.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+
+@Composable private fun EmptyLibrary(permissionNeeded: Boolean, onOpen: () -> Unit, scanning: Boolean) {
+    Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Box(Modifier.size(76.dp).clip(RoundedCornerShape(26.dp)).background(Panel), contentAlignment = Alignment.Center) { Icon(Icons.Default.Album, null, tint = Lime, modifier = Modifier.size(36.dp)) }
-        Spacer(Modifier.height(18.dp)); Text(if (permissionNeeded) "Your music stays yours" else "Nothing here yet", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(6.dp)); Text(if (permissionNeeded) "Allow access to audio files to scan music stored on this device." else "Stii will show music files available in your device library.", color = Muted)
-        Spacer(Modifier.height(18.dp)); Button(onClick = onOpen) { Text(if (permissionNeeded) "Allow music access" else "Scan again") }
+        Spacer(Modifier.height(16.dp)); Text(if (permissionNeeded) "Разрешите доступ к аудио" else "Библиотека пока пуста", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp)); Text("Интернет-поиск доступен во вкладке «Поиск» независимо от музыки на устройстве.", color = Muted)
+        Spacer(Modifier.height(14.dp)); Button(onClick = onOpen, enabled = !scanning) { Text(if (scanning) "Сканирую…" else if (permissionNeeded) "Разрешить доступ" else "Сканировать снова") }
     }
 }
-@Composable private fun TrackRow(track: AudioTrack, favorite: Boolean, onClick: () -> Unit, onFavorite: () -> Unit) {
+
+@Composable private fun TrackRow(item: MusicItem, favorite: Boolean, onClick: () -> Unit, onFavorite: () -> Unit) {
     Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 18.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        AsyncImage(track.artwork, "Album art for ${track.album}", Modifier.size(54.dp).clip(RoundedCornerShape(15.dp)).background(Panel), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
-        Column(Modifier.weight(1f).padding(horizontal = 13.dp)) { Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold); Text("${track.artist} · ${track.album}", maxLines = 1, overflow = TextOverflow.Ellipsis, color = Muted, style = MaterialTheme.typography.bodySmall) }
-        IconButton(onClick = onFavorite) { Icon(if (favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Like ${track.title}", tint = if (favorite) Lime else Muted) }
+        if (item.artworkUri != null) AsyncImage(item.artworkUri, "Обложка ${item.album}", Modifier.size(54.dp).clip(RoundedCornerShape(15.dp)).background(Panel), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+        else Box(Modifier.size(54.dp).clip(RoundedCornerShape(15.dp)).background(Brush.linearGradient(listOf(Color(0xFF30423A), Color(0xFF20262B)))), contentAlignment = Alignment.Center) { Icon(Icons.Default.MusicNote, null, tint = Lime) }
+        Column(Modifier.weight(1f).padding(horizontal = 13.dp)) {
+            Text(item.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+            Text(listOf(item.artist, item.album).filter(String::isNotBlank).joinToString(" · "), maxLines = 1, overflow = TextOverflow.Ellipsis, color = Muted, style = MaterialTheme.typography.bodySmall)
+            if (item.isOnline) Text(item.license ?: "Открытая лицензия", color = Lime, style = MaterialTheme.typography.labelSmall)
+        }
+        IconButton(onClick = onFavorite) { Icon(if (favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "В избранное", tint = if (favorite) Lime else Muted) }
     }
 }
-@Composable private fun MiniPlayer(track: AudioTrack, playing: Boolean, onOpen: () -> Unit, onPlayPause: () -> Unit, onNext: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp).clip(RoundedCornerShape(18.dp)).background(Panel).clickable(onClick = onOpen).padding(start = 9.dp, end = 5.dp, top = 7.dp, bottom = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-        AsyncImage(track.artwork, null, Modifier.size(42.dp).clip(RoundedCornerShape(12.dp)), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
-        Column(Modifier.weight(1f).padding(horizontal = 10.dp)) { Text(track.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold); Text(track.artist, color = Muted, style = MaterialTheme.typography.labelSmall) }
-        IconButton(onClick = onPlayPause) { PlayPauseIcon(playing, Lime) }; IconButton(onClick = onNext) { Icon(Icons.Default.SkipNext, null) }
+
+@Composable private fun MiniPlayer(item: MusicItem, playing: Boolean, onOpen: () -> Unit, onToggle: () -> Unit, onNext: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp).clip(RoundedCornerShape(18.dp)).background(Panel).clickable(onClick = onOpen).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (item.artworkUri != null) AsyncImage(item.artworkUri, null, Modifier.size(42.dp).clip(RoundedCornerShape(12.dp)), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+        else Box(Modifier.size(42.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFF26352E)), contentAlignment = Alignment.Center) { Icon(Icons.Default.MusicNote, null, tint = Lime) }
+        Column(Modifier.weight(1f).padding(horizontal = 10.dp)) { Text(item.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold); Text(item.artist, color = Muted, style = MaterialTheme.typography.labelSmall) }
+        IconButton(onClick = onToggle) { Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, if (playing) "Пауза" else "Играть", tint = Lime) }
+        IconButton(onClick = onNext) { Icon(Icons.Default.SkipNext, "Следующий") }
     }
 }
-@Composable private fun PlayPauseIcon(playing: Boolean, tint: Color, modifier: Modifier = Modifier) {
-    AnimatedContent(playing, transitionSpec = { (fadeIn(tween(120)) + scaleIn(initialScale = .72f, animationSpec = spring())) togetherWith (fadeOut(tween(90)) + scaleOut(targetScale = .78f, animationSpec = spring())) }, label = "play-pause") {
-        Icon(if (it) Icons.Default.Pause else Icons.Default.PlayArrow, if (it) "Pause" else "Play", tint = tint, modifier = modifier)
-    }
-}
-@Composable private fun NowPlaying(
-    track: AudioTrack, playing: Boolean, position: Float, duration: Float, favorite: Boolean, shuffle: Boolean, repeatMode: Int,
-    onBack: () -> Unit, onPlayPause: () -> Unit, onPrevious: () -> Unit, onNext: () -> Unit, onSeek: (Float) -> Unit,
-    onFavorite: () -> Unit, onShuffle: () -> Unit, onRepeat: () -> Unit, onQueue: () -> Unit, onLyrics: () -> Unit, modifier: Modifier = Modifier
-) {
-    var scrubbing by remember(track.id) { mutableStateOf(false) }; var scrubPosition by remember(track.id) { mutableFloatStateOf(position) }
+
+@Composable private fun NowPlaying(item: MusicItem, playing: Boolean, position: Float, duration: Float,
+    onBack: () -> Unit, onToggle: () -> Unit, onPrevious: () -> Unit, onNext: () -> Unit, onSeek: (Float) -> Unit,
+    onFavorite: () -> Unit, onShuffle: () -> Unit, onRepeat: () -> Unit, shuffle: Boolean, repeatMode: Int, modifier: Modifier = Modifier) {
+    var scrubbing by remember(item.id) { mutableStateOf(false) }
+    var scrubPosition by remember(item.id) { mutableFloatStateOf(position) }
     LaunchedEffect(position, scrubbing) { if (!scrubbing) scrubPosition = position }
-    val transition = updateTransition(playing, label = "cover-motion")
-    val scale by transition.animateFloat(transitionSpec = { spring(dampingRatio = .78f, stiffness = 180f) }, label = "cover-scale") { if (it) 1.015f else 1f }
-    Column(modifier.fillMaxSize().padding(horizontal = 22.dp).padding(top = 12.dp, bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(modifier.fillMaxSize().padding(horizontal = 22.dp).padding(top = 12.dp, bottom = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-            Text("NOW PLAYING", Modifier.weight(1f), color = Muted, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-            IconButton(onClick = onQueue) { Icon(Icons.Default.QueueMusic, "Queue", tint = Lime) }; IconButton(onClick = onLyrics) { Icon(Icons.Default.TextSnippet, "Lyrics", tint = Lime) }
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Назад") }
+            Text("СЕЙЧАС ИГРАЕТ", Modifier.weight(1f), color = Muted, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+            if (item.isOnline) Text("WEB", color = Lime, style = MaterialTheme.typography.labelSmall)
         }
-        Spacer(Modifier.weight(.55f))
-        Box(Modifier.fillMaxWidth().aspectRatio(1f).graphicsLayer { scaleX = scale; scaleY = scale }.clip(RoundedCornerShape(32.dp)).background(Brush.linearGradient(listOf(Color(0xFF496C52), Color(0xFF1E3230), Color(0xFF161A21))), contentAlignment = Alignment.Center) {
-            AsyncImage(track.artwork, "Album art for ${track.album}", Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
-            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .14f)))
+        Spacer(Modifier.weight(.5f))
+        Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(30.dp)).background(Brush.linearGradient(listOf(Color(0xFF496C52), Color(0xFF1E3230), Color(0xFF161A21)))), contentAlignment = Alignment.Center) {
+            if (item.artworkUri != null) AsyncImage(item.artworkUri, null, Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+            else Icon(Icons.Default.Album, null, tint = Lime.copy(alpha = .8f), modifier = Modifier.size(100.dp))
         }
-        Spacer(Modifier.weight(.55f))
+        Spacer(Modifier.weight(.5f))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) { AnimatedContent(track.title, transitionSpec = { (fadeIn(tween(180)) + slideInVertically { it / 4 }) togetherWith (fadeOut(tween(120)) + slideOutVertically { -it / 4 }) }, label = "track-title") { Text(it, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis) }; Text(track.artist, color = Muted, style = MaterialTheme.typography.titleMedium, maxLines = 1) }
-            IconButton(onClick = onFavorite) { Icon(if (favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Like", tint = if (favorite) Lime else Muted) }
+            Column(Modifier.weight(1f)) { Text(item.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis); Text(item.artist, color = Muted, style = MaterialTheme.typography.titleMedium) }
+            IconButton(onClick = onFavorite) { Icon(Icons.Default.FavoriteBorder, "Избранное", tint = Lime) }
         }
-        Slider(scrubPosition.coerceIn(0f, duration), { scrubPosition = it; scrubbing = true }, onValueChangeFinished = { onSeek(scrubPosition); scrubbing = false }, valueRange = 0f..duration, modifier = Modifier.fillMaxWidth())
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(formatTime(scrubPosition.toLong()), color = Muted, style = MaterialTheme.typography.labelSmall); Text(formatTime(track.durationMs), color = Muted, style = MaterialTheme.typography.labelSmall) }
-        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onShuffle) { Icon(Icons.Default.Shuffle, "Shuffle", tint = if (shuffle) Lime else Muted) }
-            IconButton(onClick = onPrevious, Modifier.size(54.dp)) { Icon(Icons.Default.SkipPrevious, "Previous", Modifier.size(32.dp)) }
-            Surface(onClick = onPlayPause, color = Lime, shape = CircleShape, modifier = Modifier.size(70.dp)) { Box(contentAlignment = Alignment.Center) { PlayPauseIcon(playing, Ink, Modifier.size(38.dp)) } }
-            IconButton(onClick = onNext, Modifier.size(54.dp)) { Icon(Icons.Default.SkipNext, "Next", Modifier.size(32.dp)) }
-            IconButton(onClick = onRepeat) { Icon(if (repeatMode == Player.REPEAT_MODE_ONE) Icons.Default.RepeatOne else Icons.Default.Repeat, "Repeat", tint = if (repeatMode != Player.REPEAT_MODE_OFF) Lime else Muted) }
+        Slider(scrubPosition.coerceIn(0f, duration), { scrubPosition = it; scrubbing = true }, onValueChangeFinished = { onSeek(scrubPosition); scrubbing = false }, valueRange = 0f..duration)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(timeText(scrubPosition.toLong()), color = Muted); Text(timeText(item.durationMs), color = Muted) }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onShuffle) { Text(if (shuffle) "🔀" else "⇄", color = if (shuffle) Lime else Muted) }
+            IconButton(onClick = onPrevious) { Icon(Icons.Default.SkipPrevious, "Предыдущий", Modifier.size(34.dp)) }
+            Surface(onClick = onToggle, color = Lime, shape = CircleShape, modifier = Modifier.size(70.dp)) { Box(contentAlignment = Alignment.Center) { Icon(if (playing) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Ink, modifier = Modifier.size(38.dp)) } }
+            IconButton(onClick = onNext) { Icon(Icons.Default.SkipNext, "Следующий", Modifier.size(34.dp)) }
+            IconButton(onClick = onRepeat) { Text(if (repeatMode == Player.REPEAT_MODE_ONE) "1↻" else "↻", color = if (repeatMode == Player.REPEAT_MODE_OFF) Muted else Lime) }
         }
-        Spacer(Modifier.weight(.35f))
+        Spacer(Modifier.weight(.3f))
     }
 }
-private fun formatTime(milliseconds: Long): String { val seconds = (milliseconds / 1000).coerceAtLeast(0); return String.format(Locale.getDefault(), "%d:%02d", seconds / 60, seconds % 60) }
+
+private fun timeText(ms: Long): String { val seconds = (ms / 1000).coerceAtLeast(0); return String.format(Locale.getDefault(), "%d:%02d", seconds / 60, seconds % 60) }

@@ -1,22 +1,20 @@
 # Stii
 
-A personal Kotlin/Jetpack Compose Android music player with original UI and Media3 playback.
+Personal Kotlin/Jetpack Compose Android music player with original design, background playback and online discovery of openly licensed audio.
 
-## Current functionality
+## Music search and playback
 
-- Scans local audio files through Android MediaStore after a runtime permission prompt.
-- Immediate, offline search across track, artist, and album names. Search uses normalized, precomputed fields, ignores accent differences, ranks exact/prefix matches first, and performs cancellable filtering off the UI thread.
-- Media3 ExoPlayer owned by a `MediaSessionService`, so playback and system media controls can continue when the Activity is backgrounded. Supports audio focus, headphone-unplug pause, system notification/lock-screen controls, queue, seek, shuffle, repeat, and album artwork metadata.
-- Local favorites persist on the device; the Library tab filters to liked tracks.
-- LRCLIB lyrics lookup on demand. Lyrics require internet and may not be available for every song.
-- Animated player transitions and original dark/lime UI.
+- **On-device search:** MediaStore library, indexed on scan; filters locally and immediately by track, artist, and album.
+- **Internet search:** Internet Archive audio catalog. Search results are resolved against item metadata and only entries declaring a Creative Commons or public-domain license are offered for playback. Licenses are shown on result rows. Availability and rights metadata are supplied by the catalog, and can be incomplete or incorrect; check the item's source record when in doubt.
+- **Playback:** Media3 ExoPlayer in an Android MediaSessionService for background audio, notification/lock-screen media controls, audio focus and headset disconnect handling. Local and online results both play in the service.
+- Local favorites, queue selection, seek, shuffle/repeat, album art and original UI.
 
 ## Build
 
 Android Studio, Android SDK 35, and JDK 17+ are required. Open this repository in Android Studio and run the `app` configuration. Gradle wrapper scripts are not included yet.
 
-## Scope
+## Limits and sources
 
-Music discovery/playback currently searches and plays music files present on the device. It does **not** search or stream the YouTube Music/Spotify catalogs. The network feature is optional lyrics lookup through LRCLIB. No bypassing of paid services or protected stream extraction is included.
+Internet search is currently restricted to Internet Archive audio items with recognized CC/public-domain metadata. It is not a YouTube Music or Spotify catalog client, and does not extract streams, bypass access controls, or evade subscriptions. Internet Archive and LRCLIB availability depends on their services and network access. Respect each item's license and attribution terms.
 
-The implementation is original and uses common Android Media3 patterns. Other music repositories were references for product ideas; their source files and branded assets were not copied. Stii is independent and unaffiliated with those projects or Google/YouTube.
+Stii is an independent app. Other open-source music projects informed general UX ideas; their source files and branded assets were not copied.
