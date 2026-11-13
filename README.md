@@ -1,36 +1,25 @@
 # Stii
 
-A Kotlin/Jetpack Compose Android music player foundation with an original dark-and-lime visual identity.
+A personal, Kotlin/Jetpack Compose Android music player with an original dark-and-lime design.
 
-## Current features
+## Included now
 
-- Scans the on-device music library with Android MediaStore.
-- Immediate local search across track, artist, and album names. Search work runs on a cancellable background coroutine; exact/prefix matches rank first and stale searches are discarded.
-- Media3 playback with audio-focus handling, headset unplug pause, queue selection, seek scrubbing, shuffle, repeat, and album artwork.
-- Local favorites persist on the device and appear in the Library tab.
-- Animated screen transitions, search-field reveal, track-title changes, play/pause morph, and subtle playing-cover motion.
+- Local device library scanning via MediaStore and runtime permission flow.
+- Immediate local search across track, artist, and album names, with exact and prefix matches ranked first. Search filtering is cancellable and runs off the UI thread.
+- Media3 playback with audio focus, pause-on-headphone-unplug, queue, shuffle, repeat, seek scrubbing, and album artwork.
+- Persisted local favorites and a favorites library tab.
+- Smooth player/page transitions, animated play/pause, responsive album art, and animated search reveal.
+- Optional lyrics lookup from LRCLIB by track title and artist. Lyrics are loaded only when requested; no app account is needed.
 
 ## Build
 
 - Android Studio with Android SDK 35
 - JDK 17+
 
-Open this repository in Android Studio and run the `app` configuration. The project is a standard Gradle Android project; Gradle wrapper scripts are not included yet.
+Open the repository in Android Studio and run the `app` configuration. Gradle wrapper scripts are not included yet.
 
-## Limitations
+## Scope and next work
 
-This version plays local device files. It does not yet include streaming-service integrations, lyrics, background playback/media notification, downloads, Android Auto, equalizer, playlist persistence, account sync, Listen Together, casting, or TV UI. Those need dedicated implementations and verification; the project does not claim feature parity with referenced apps.
+Playback currently covers local files; it is not an online streaming client. Lyrics availability depends on LRCLIB and network access. Background playback with a foreground media service/notification, downloads, Android Auto, equalizer, playlist editing, external source integrations, and TV layouts are not implemented yet.
 
-## Inspiration and attribution
-
-Stii uses general product ideas as inspiration, while its source code and visual implementation are original. No source files, artwork, or branded interface assets from these projects were copied:
-
-- https://github.com/Yigder/Prism
-- https://github.com/nkosanamahungela-dev/NexaMusic
-- https://github.com/jlfuertes14/Aura-Music
-- https://github.com/OreoMuncher45/Auris
-- https://github.com/daddyyour0786-dev/Lossless
-- https://github.com/kushagrasinghx/BitChord
-- https://github.com/realidkroo/Mochy-Music
-
-Stii is an independent project and is not affiliated with Google, YouTube, or the referenced apps.
+Stii uses an original codebase and visual design. The cited apps informed general feature goals only; their branded assets and source files were not copied. Stii is not affiliated with those projects or with Google/YouTube.
