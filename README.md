@@ -1,25 +1,32 @@
 # Stii
 
-Personal Kotlin/Jetpack Compose Android music player with an original dark/lime UI.
+Personal Kotlin/Jetpack Compose Android music player with original dark/lime UI.
 
-## Architecture
+## Install on your Android phone
 
-- `data/MusicItem.kt` — shared local/online audio model and normalized search text.
-- `data/MusicRepository.kt` — MediaStore library access and open-catalog boundary.
-- `InternetArchiveCatalog.kt` — bounded concurrent metadata lookups for openly licensed Internet Archive audio.
-- `ui/StiiViewModel.kt` — lifecycle-aware UI state, local search, debounced internet search, scan state and persistent favorites.
-- `MainActivity.kt` — Compose screens and MediaController connection.
-- `StiiPlaybackService.kt` — Media3 playback session for background audio and system controls.
+The repository currently does not include a prebuilt APK or Gradle wrapper. Build a debug APK on a computer:
 
-## Features
+1. Install Android Studio and open this repository (`stelinZ/Stii`). Install Android SDK Platform 35 when prompted; use JDK 17 (Android Studio's bundled JDK is suitable).
+2. In Android Studio's Terminal, install/use Gradle 8.9 and generate the wrapper once:
+   ```bash
+   gradle wrapper --gradle-version 8.9
+   ```
+   If `gradle` is not available, install Gradle 8.9 and add it to PATH first.
+3. Build the APK:
+   - Windows: `gradlew.bat assembleDebug`
+   - macOS/Linux: `./gradlew assembleDebug`
+4. APK output: `app/build/outputs/apk/debug/app-debug.apk`.
+5. Copy the APK to your phone and open it. Android may ask you to allow “Install unknown apps” for the file manager/browser you used. Approve only if you trust the APK source.
 
-- Search and play local tracks and Internet Archive audio with recognized CC/public-domain metadata.
-- Local search is accent-insensitive and runs off the UI thread; online search is debounced and stale queries are canceled.
-- MediaSessionService playback, audio focus, headphone disconnect handling, notification/lock-screen controls, play/pause, seek, next/previous, shuffle/repeat.
-- Persistent favorites, artwork, mini-player, full player and animated screen transitions.
+Alternatively, connect the phone with USB debugging enabled and run `adb install -r app/build/outputs/apk/debug/app-debug.apk` after building.
 
-## Build and limits
+## Implemented foundation
 
-Open in Android Studio with Android SDK 35 and JDK 17+. Gradle wrapper scripts are not included yet. Internet availability and license metadata depend on the catalog. Review the item's source record and follow its specific license. This app does not search/extract from YouTube Music or Spotify and does not bypass access controls or paid subscriptions.
+- Local Android MediaStore library, instant offline search, and persistent favorites.
+- Internet Archive audio search for entries with recognized CC/public-domain metadata.
+- Media3 `MediaSessionService` background playback and system media controls.
+- Original Compose screens, mini-player and full player, with queue controls, seek, shuffle/repeat.
 
-Stii is an independent project. Other music apps informed general feature goals only; no branded screen assets or complete source files were copied.
+## Limitations
+
+The online catalog is not YouTube Music or Spotify. Availability and rights metadata depend on the catalog; review the original item and obey its license. Stii does not extract streams, bypass access controls, or evade subscriptions. Gradle wrapper scripts are not checked in, so generate them as above before command-line builds.

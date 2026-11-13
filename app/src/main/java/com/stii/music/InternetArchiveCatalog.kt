@@ -1,6 +1,7 @@
 package com.stii.music
 
 import android.net.Uri
+import com.stii.music.data.MusicItem
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -15,7 +16,6 @@ internal object InternetArchiveCatalog {
     private const val SEARCH_ENDPOINT = "https://archive.org/advancedsearch.php"
     private const val MAX_RESULTS = 8
     private val allowedExtensions = setOf("mp3", "ogg", "opus", "flac", "m4a", "wav")
-    // Metadata calls are independent. Bound concurrency to be fast without flooding the catalog.
     private val metadataWorkers = Executors.newFixedThreadPool(4)
 
     fun searchOpenAudio(query: String): Result<List<MusicItem>> = runCatching {
@@ -29,50 +29,34 @@ internal object InternetArchiveCatalog {
             val identifier = doc.optString("identifier").takeIf(String::isNotBlank) ?: return@mapNotNull null
             CompletableFuture.supplyAsync({ resolveItem(doc, identifier) }, metadataWorkers)
         }
-        futures.mapNotNull { future ->
-            runCatching { future.get(12, TimeUnit.SECONDS) }.getOrNull()
-        }.distinctBy { it.id }
+        futures.mapNotNull { future -> runCatching { future.get(12, TimeUnit.SECONDS) }.getOrNull() }.distinctBy { it.id }
     }
 
     private fun resolveItem(doc: JSONObject, identifier: String): MusicItem? {
-        val metadata = runCatching {
-            requestJson("https://archive.org/metadata/${pathSegment(identifier)}")
-        }.getOrNull() ?: return null
+        val metadata = runCatching { requestJson("https://archive.org/metadata/${pathSegment(identifier)}") }.getOrNull() ?: return null
         val meta = metadata.optJSONObject("metadata") ?: return null
-        val licenseUrl = meta.optString("licenseurl").ifBlank {
-            meta.optString("license_url").ifBlank { meta.optString("license") }
-        }
+        val licenseUrl = meta.optString("licenseurl").ifBlank { meta.optString("license_url").ifBlank { meta.optString("license") } }
         val license = allowedLicense(licenseUrl) ?: return null
         val files = metadata.optJSONArray("files") ?: return null
-        val file = (0 until files.length()).mapNotNull(files::optJSONObject)
-            .firstOrNull(::isPlayableAudio) ?: return null
+        val file = (0 until files.length()).mapNotNull(files::optJSONObject).firstOrNull(::isPlayableAudio) ?: return null
         val fileName = file.optString("name").ifBlank { return null }
         val encodedFilePath = fileName.split('/').joinToString("/") { pathSegment(it) }
         val title = doc.optString("title").ifBlank { meta.optString("title") }.ifBlank { identifier }
-        val creator = creatorText(doc.opt("creator")).ifBlank {
-            creatorText(meta.opt("creator")).ifBlank { "Internet Archive contributor" }
-        }
+        val artist = creatorText(doc.opt("creator")).ifBlank { creatorText(meta.opt("creator")).ifBlank { "Internet Archive contributor" } }
         val duration = parseDurationMs(file.optString("length"))
         return MusicItem(
-            id = "ia:$identifier:$fileName",
-            title = title,
-            artist = creator,
-            album = "Internet Archive",
+            id = "ia:$identifier:$fileName", title = title, artist = artist, album = "Internet Archive",
             durationMs = duration,
             mediaUri = Uri.parse("https://archive.org/download/${pathSegment(identifier)}/$encodedFilePath"),
             artworkUri = Uri.parse("https://archive.org/services/img/${pathSegment(identifier)}"),
-            isOnline = true,
-            license = license,
+            isOnline = true, license = license,
         )
     }
 
     private fun isPlayableAudio(file: JSONObject): Boolean {
         if (file.optBoolean("private", false)) return false
-        val name = file.optString("name")
-        val extension = name.substringAfterLast('.', "").lowercase()
-        if (extension !in allowedExtensions) return false
-        val size = file.optString("size").toLongOrNull()
-        return size == null || size > 0L
+        if (file.optString("name").substringAfterLast('.', "").lowercase() !in allowedExtensions) return false
+        return file.optString("size").toLongOrNull()?.let { it > 0L } ?: true
     }
 
     private fun creatorText(value: Any?): String = when (value) {
@@ -85,17 +69,16 @@ internal object InternetArchiveCatalog {
         value.toDoubleOrNull()?.let { return (it * 1000).toLong().coerceAtLeast(0L) }
         val parts = value.split(':').mapNotNull(String::toLongOrNull)
         if (parts.isEmpty()) return 0L
-        val seconds = parts.fold(0L) { total, part -> total * 60 + part }
-        return seconds * 1000L
+        return parts.fold(0L) { total, part -> total * 60L + part } * 1000L
     }
 
     private fun allowedLicense(url: String): String? {
         val normalized = url.lowercase()
         return when {
             "creativecommons.org/publicdomain" in normalized || "creativecommons.org/licenses/zero/" in normalized -> "Public domain / CC0"
-            "creativecommons.org/licenses/by-sa/" in normalized -> "CC BY-SA"
             "creativecommons.org/licenses/by-nc-sa/" in normalized -> "CC BY-NC-SA"
             "creativecommons.org/licenses/by-nc-nd/" in normalized -> "CC BY-NC-ND"
+            "creativecommons.org/licenses/by-sa/" in normalized -> "CC BY-SA"
             "creativecommons.org/licenses/by-nc/" in normalized -> "CC BY-NC"
             "creativecommons.org/licenses/by-nd/" in normalized -> "CC BY-ND"
             "creativecommons.org/licenses/by/" in normalized -> "CC BY"
@@ -116,9 +99,7 @@ internal object InternetArchiveCatalog {
             val status = connection.responseCode
             if (status !in 200..299) throw IllegalStateException("Catalog request failed: HTTP $status")
             return JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
-        } finally {
-            connection.disconnect()
-        }
+        } finally { connection.disconnect() }
     }
 
     private fun pathSegment(value: String): String = URLEncoder.encode(value, "UTF-8").replace("+", "%20")
